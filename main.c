@@ -4,6 +4,8 @@
 #include <string.h>
 #include <time.h>
 
+#define DEBUG 0  // 调试开关，1为开启，0为关闭
+
 typedef struct adj_list
 {
     int *nodes;   // 邻接顶点数组
@@ -265,25 +267,37 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
         graph g;
         graph_init(&g, key_count);
 
-        int* edge_to_key = (int*)malloc(key_count * sizeof(int));
-        for (int i = 0; i < key_count; i++) edge_to_key[i] = -1;
+#if DEBUG
+        printf("\n尝试 %d: 使用种子 %llu 和 %llu\n", retry+1, seed1, seed2);
+        printf("生成的边:\n");
+#endif
 
         bool self_loop = false;
         for (int i = 0; i < key_count; i++) {
             int v1 = hash_function(keys[i], seed1, table_size);
             int v2 = hash_function(keys[i], seed2, table_size);
+            
             if (v1 == v2) {
+#if DEBUG
+                printf("字符串 %s 生成自环顶点 %d-%d\n", keys[i], v1, v2);
+#endif
                 self_loop = true;
                 break;
             }
+            
             if (!graph_add_edge(&g, v1, v2)) {
+#if DEBUG
+                printf("边 %d - %d 已存在 (来自字符串: %s)\n", v1, v2, keys[i]);
+#endif
                 self_loop = true;
                 break;
             }
-            edge_to_key[g.edge_num - 1] = i;
+#if DEBUG
+            printf("添加边 %d: %d - %d (来自字符串: %s)\n",
+                  g.edge_num-1, v1, v2, keys[i]);
+#endif
         }
         if (self_loop) {
-            free(edge_to_key);
             graph_free(&g);
             continue;
         }
@@ -291,25 +305,68 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
         removed_count = 0;
         bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
 
+#if DEBUG
+        printf("\n边剥离顺序:\n");
+        for (int i = 0; i < removed_count; i++) {
+            int edge_idx = removed_order[i];
+            printf("%d: %d - %d (来自字符串: %s)\n",
+                  i, g.edges[edge_idx][0], g.edges[edge_idx][1], keys[edge_idx]);
+        }
+        printf("\n图%s环\n", has_cycle ? "有" : "无");
+#endif
+
         if (!has_cycle && removed_count == key_count) {
             // 分配g_value数组
             int* g_value = (int*)calloc(table_size, sizeof(int));
             int* used = (int*)calloc(table_size, sizeof(int));
 
+#if DEBUG
+            printf("\n开始分配g_value:\n");
+#endif
+            // 逆序处理剥离顺序，分配g_value
             for (int i = removed_count - 1; i >= 0; i--) {
                 int edge_idx = removed_order[i];
                 int v1 = g.edges[edge_idx][0];
                 int v2 = g.edges[edge_idx][1];
-                int key_idx = edge_to_key[edge_idx];
-                if (key_idx == -1) continue;
-                if (!used[v1]) {
-                    g_value[v1] = (key_idx - g_value[v2] + key_count) % key_count;
+                
+#if DEBUG
+                printf("\n处理边 %d: %d-%d (来自字符串: %s)\n",
+                      edge_idx, v1, v2, keys[edge_idx]);
+#endif
+                if (!used[v1] && !used[v2]) {
+                    g_value[v1] = 0;
                     used[v1] = 1;
-                } else {
-                    g_value[v2] = (key_idx - g_value[v1] + key_count) % key_count;
+                    g_value[v2] = edge_idx;
                     used[v2] = 1;
+#if DEBUG
+                    printf("  - 分配 g[%d] = 0 (初始值)\n", v1);
+                    printf("  - 分配 g[%d] = %d (边序号)\n", v2, edge_idx);
+#endif
+                } else if (!used[v1]) {
+                    g_value[v1] = edge_idx - g_value[v2];
+                    used[v1] = 1;
+#if DEBUG
+                    printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
+                          v1, g_value[v1], edge_idx, v2, g_value[v2]);
+#endif
+                } else {
+                    g_value[v2] = edge_idx - g_value[v1];
+                    used[v2] = 1;
+#if DEBUG
+                    printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
+                          v2, g_value[v2], edge_idx, v1, g_value[v1]);
+#endif
                 }
             }
+
+#if DEBUG
+            printf("\n最终g_value分配结果:\n");
+            for (int i = 0; i < table_size; i++) {
+                if (used[i]) {
+                    printf("顶点 %d: g_value = %d\n", i, g_value[i]);
+                }
+            }
+#endif
 
             mphf->g_value = g_value;
             mphf->g_size = table_size;
@@ -317,12 +374,10 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
             mphf->seed2 = seed2;
 
             free(used);
-            free(edge_to_key);
             free(removed_order);
             graph_free(&g);
             return true;
         }
-        free(edge_to_key);
         graph_free(&g);
     }
     free(removed_order);
@@ -377,157 +432,19 @@ int main() {
 
     printf("生成 %d 个随机字符串:\n", key_count);
     
-    // 输出生成的字符串
-    // printf("生成的随机字符串:\n");
-    // for (int i = 0; i < key_count; i++) {
-    //     printf("%d: %s\n", i, keys[i]);
-    // }
-    
-    // 初始化图
-    graph g;
-    graph_init(&g, key_count);
-    
-    // 使用hash函数生成顶点并添加边，确保生成无环图
-    int max_retry = 100;
-    int retry_count = 0;
-    bool success = false;
-    unsigned long long seed1, seed2;
-    
-    while (!success && retry_count < max_retry) {
-        retry_count++;
-        success = true;
+    mphf_t mphf;
+    if (mphf_build((const char**)keys, key_count, &mphf)) {
+#if 1
+        printf("\nMPHF构建成功！\n");
+        printf("种子1: %llu\n", mphf.seed1);
+        printf("种子2: %llu\n", mphf.seed2);
         
-        // 重新初始化图
-        graph_free(&g);
-        graph_init(&g, key_count);
-        
-        // 生成新的随机种子
-        seed1 = ((unsigned long long)rand() << 32) | rand();
-        seed2 = ((unsigned long long)rand() << 32) | rand();
-        
-        printf("\n尝试 %d: 使用种子 %llu 和 %llu\n", retry_count, seed1, seed2);
-        printf("生成的边:\n");
-        
-        // 尝试添加所有边
-        for (int i = 0; i < key_count; i++) {
-            int v1 = hash_function(keys[i], seed1, table_size);
-            int v2 = hash_function(keys[i], seed2, table_size);
-            
-            if (v1 == v2) {
-                printf("字符串 %s 生成自环顶点 %d-%d\n", keys[i], v1, v2);
-                success = false;
-                break;
-            }
-            
-            if (!graph_add_edge(&g, v1, v2)) {
-                printf("边 %d - %d 已存在 (来自字符串: %s)\n", v1, v2, keys[i]);
-                success = false;
-                break;
-            }
-            // printf("添加边: %d - %d (来自字符串: %s)\n", v1, v2, keys[i]);
-        }
-        
-        // 如果边添加成功，检查是否有环
-        if (success) {
-            int *removed_order = (int *)malloc(key_count * sizeof(int));
-            int removed_count = 0;
-            bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
-            
-            if (has_cycle) {
-                printf("检测到环，将重新尝试...\n");
-                success = false;
-            }
-            free(removed_order);
-        }
-    }
-    
-    if (!success) {
-        printf("\n达到最大重试次数 %d，无法生成无环图\n", max_retry);
-        // 清理资源
-        graph_free(&g);
-        for (int i = 0; i < key_count; i++) {
-            free(keys[i]);
-        }
-        free(keys);
-        return 1;
-    }
-    
-    // 输出边剥离顺序
-    int *removed_order = (int *)malloc(key_count * sizeof(int));
-    int removed_count = 0;
-    bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
-    
-    // printf("\n边剥离顺序:\n");
-    // for (int i = 0; i < removed_count; i++) {
-    //     int edge_idx = removed_order[i];
-    //     printf("%d: %d - %d (来自字符串: %s)\n",
-    //            i,
-    //            g.edges[edge_idx][0],
-    //            g.edges[edge_idx][1],
-    //            keys[edge_idx]);
-    // }
-    
-    printf("\n图%s环\n", has_cycle ? "有" : "无");
-
-    if(success) {
-        printf("\n第%d次尝试成功生成无环图，顶点数量: %d, 边数量: %d\n",retry_count, g.node_num, g.edge_num);
-
-        // 分配g_value
-        printf("\n开始分配g_value:\n");
-        int *g_value = (int *)calloc(table_size, sizeof(int));
-        int *used = (int *)calloc(table_size, sizeof(int));
-        
-        // 逆序处理剥离顺序，分配g_value
-        for (int i = removed_count - 1; i >= 0; i--) {
-            int edge_idx = removed_order[i];
-            int v1 = g.edges[edge_idx][0];
-            int v2 = g.edges[edge_idx][1];
-            const char *key = keys[edge_idx];
-            
-            // printf("\n处理边 %d: %d-%d (来自字符串: %s)\n", edge_idx, v1, v2, key);
-            
-            if (!used[v1] && !used[v2]) {
-                // 如果两个顶点都未使用，先分配一个为0
-                g_value[v1] = 0;
-                used[v1] = 1;
-                g_value[v2] = edge_idx;
-                used[v2] = 1;
-                // printf("  - 分配 g[%d] = 0 (初始值)\n", v1);
-                // printf("  - 分配 g[%d] = %d (边序号)\n", v2, edge_idx);
-            } else if (!used[v1]) {
-                g_value[v1] = edge_idx - g_value[v2];
-                used[v1] = 1;
-                // printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
-                //       v1, g_value[v1], edge_idx, v2, g_value[v2]);
-            } else {
-                g_value[v2] = edge_idx - g_value[v1];
-                used[v2] = 1;
-                // printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
-                //       v2, g_value[v2], edge_idx, v1, g_value[v1]);
-            }
-        }
-
-        // printf("\n最终g_value分配结果:\n");
-        // for (int i = 0; i < table_size; i++) {
-        //     if (used[i]) {
-        //         printf("顶点 %d: g_value = %d\n", i, g_value[i]);
-        //     }
-        // }
-
         // 验证哈希冲突
-        printf("\n开始验证哈希冲突:\n");
+        printf("\n验证哈希冲突:\n");
         int *hash_values = (int *)calloc(key_count, sizeof(int));
         int conflict = 0;
         for (int i = 0; i < key_count; i++) {
-            int v1 = hash_function(keys[i], seed1, table_size);
-            int v2 = hash_function(keys[i], seed2, table_size);
-            int h = g_value[v1] + g_value[v2];
-            if (h < 0) h += key_count;  // 确保结果为非负
-            h %= key_count;
-            
-            // printf("字符串 %s: h(%d,%d) = (%d + %d) %% %d = %d\n",
-            //       keys[i], v1, v2, g_value[v1], g_value[v2], key_count, h);
-            
+            int h = mphf_hash(&mphf, keys[i]);
             if (hash_values[h]) {
                 printf("  ! 冲突: 与字符串 %s 哈希值相同(%d)\n",
                        keys[hash_values[h]-1], h);
@@ -536,21 +453,19 @@ int main() {
                 hash_values[h] = i+1;
             }
         }
-
         if (!conflict) {
-            printf("\n验证通过，无哈希冲突\n");
+            printf("验证通过，无哈希冲突\n");
         } else {
-            printf("\n警告: 检测到哈希冲突\n");
+            printf("警告: 检测到哈希冲突\n");
         }
-
-        free(g_value);
-        free(used);
         free(hash_values);
+        free(mphf.g_value);
+#endif
+    } else {
+        printf("\n达到最大重试次数，无法生成无环图\n");
     }
     
     // 清理资源
-    free(removed_order);
-    graph_free(&g);
     for (int i = 0; i < key_count; i++) {
         free(keys[i]);
     }
