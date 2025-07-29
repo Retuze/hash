@@ -296,7 +296,6 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
             int* g_value = (int*)calloc(table_size, sizeof(int));
             int* used = (int*)calloc(table_size, sizeof(int));
 
-            // 逆序处理剥离顺序，分配g_value
             for (int i = removed_count - 1; i >= 0; i--) {
                 int edge_idx = removed_order[i];
                 int v1 = g.edges[edge_idx][0];
@@ -359,55 +358,203 @@ void generate_unique_random_strings(char **keys, int key_count, int min_len, int
         }
     }
 }
-
-// 示例用法
+#include <Windows.h>
+// 使用随机字符串生成hash顶点并测试图
 int main() {
-    srand(12345);
-    mphf_t mphf;
-    int random_key_count = 10;
-    int min_len = 6, max_len = 16;
-    char **random_keys = (char **)malloc(random_key_count * sizeof(char *));
-    for (int i = 0; i < random_key_count; i++) {
-        random_keys[i] = (char *)malloc((max_len + 1) * sizeof(char));
+    SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+    srand(time(NULL));
+    int key_count = 100000;  // 字符串数量
+    int min_len = 1, max_len = 16;  // 字符串最小/最大长度
+    int table_size = key_count * 2;  // 顶点数量
+    
+    // 生成随机字符串
+    char **keys = (char **)malloc(key_count * sizeof(char *));
+    for (int i = 0; i < key_count; i++) {
+        keys[i] = (char *)malloc((max_len + 1) * sizeof(char));
     }
-    generate_unique_random_strings(random_keys, random_key_count, min_len, max_len);
+    generate_unique_random_strings(keys, key_count, min_len, max_len);
 
-    for(int i = 0; i < random_key_count; i++) {
-        printf("Random key %d: %s\n", i, random_keys[i]);
-    }
-
-    if (mphf_build((const char **)random_keys, random_key_count, &mphf)) {
-        printf("MPHF build success!\n");
-
-        for(int i = 0; i < random_key_count; i++) {
-            int hash_value = mphf_hash(&mphf, random_keys[i]);
-            printf("Key: %s, Hash: %d\n", random_keys[i], hash_value);
-        }
-        // 检查是否有冲突
-        int *hash_used = (int *)calloc(random_key_count, sizeof(int));
-        int conflict = 0;
-        for (int i = 0; i < random_key_count; i++) {
-            int h = mphf_hash(&mphf, random_keys[i]);
-            if (hash_used[h]) {
-                printf("Conflict at hash %d for key %s\n", h, random_keys[i]);
-                conflict = 1;
+    printf("生成 %d 个随机字符串:\n", key_count);
+    
+    // 输出生成的字符串
+    // printf("生成的随机字符串:\n");
+    // for (int i = 0; i < key_count; i++) {
+    //     printf("%d: %s\n", i, keys[i]);
+    // }
+    
+    // 初始化图
+    graph g;
+    graph_init(&g, key_count);
+    
+    // 使用hash函数生成顶点并添加边，确保生成无环图
+    int max_retry = 100;
+    int retry_count = 0;
+    bool success = false;
+    unsigned long long seed1, seed2;
+    
+    while (!success && retry_count < max_retry) {
+        retry_count++;
+        success = true;
+        
+        // 重新初始化图
+        graph_free(&g);
+        graph_init(&g, key_count);
+        
+        // 生成新的随机种子
+        seed1 = ((unsigned long long)rand() << 32) | rand();
+        seed2 = ((unsigned long long)rand() << 32) | rand();
+        
+        printf("\n尝试 %d: 使用种子 %llu 和 %llu\n", retry_count, seed1, seed2);
+        printf("生成的边:\n");
+        
+        // 尝试添加所有边
+        for (int i = 0; i < key_count; i++) {
+            int v1 = hash_function(keys[i], seed1, table_size);
+            int v2 = hash_function(keys[i], seed2, table_size);
+            
+            if (v1 == v2) {
+                printf("字符串 %s 生成自环顶点 %d-%d\n", keys[i], v1, v2);
+                success = false;
                 break;
             }
-            hash_used[h] = 1;
+            
+            if (!graph_add_edge(&g, v1, v2)) {
+                printf("边 %d - %d 已存在 (来自字符串: %s)\n", v1, v2, keys[i]);
+                success = false;
+                break;
+            }
+            // printf("添加边: %d - %d (来自字符串: %s)\n", v1, v2, keys[i]);
         }
+        
+        // 如果边添加成功，检查是否有环
+        if (success) {
+            int *removed_order = (int *)malloc(key_count * sizeof(int));
+            int removed_count = 0;
+            bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
+            
+            if (has_cycle) {
+                printf("检测到环，将重新尝试...\n");
+                success = false;
+            }
+            free(removed_order);
+        }
+    }
+    
+    if (!success) {
+        printf("\n达到最大重试次数 %d，无法生成无环图\n", max_retry);
+        // 清理资源
+        graph_free(&g);
+        for (int i = 0; i < key_count; i++) {
+            free(keys[i]);
+        }
+        free(keys);
+        return 1;
+    }
+    
+    // 输出边剥离顺序
+    int *removed_order = (int *)malloc(key_count * sizeof(int));
+    int removed_count = 0;
+    bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
+    
+    // printf("\n边剥离顺序:\n");
+    // for (int i = 0; i < removed_count; i++) {
+    //     int edge_idx = removed_order[i];
+    //     printf("%d: %d - %d (来自字符串: %s)\n",
+    //            i,
+    //            g.edges[edge_idx][0],
+    //            g.edges[edge_idx][1],
+    //            keys[edge_idx]);
+    // }
+    
+    printf("\n图%s环\n", has_cycle ? "有" : "无");
+
+    if(success) {
+        printf("\n第%d次尝试成功生成无环图，顶点数量: %d, 边数量: %d\n",retry_count, g.node_num, g.edge_num);
+
+        // 分配g_value
+        printf("\n开始分配g_value:\n");
+        int *g_value = (int *)calloc(table_size, sizeof(int));
+        int *used = (int *)calloc(table_size, sizeof(int));
+        
+        // 逆序处理剥离顺序，分配g_value
+        for (int i = removed_count - 1; i >= 0; i--) {
+            int edge_idx = removed_order[i];
+            int v1 = g.edges[edge_idx][0];
+            int v2 = g.edges[edge_idx][1];
+            const char *key = keys[edge_idx];
+            
+            // printf("\n处理边 %d: %d-%d (来自字符串: %s)\n", edge_idx, v1, v2, key);
+            
+            if (!used[v1] && !used[v2]) {
+                // 如果两个顶点都未使用，先分配一个为0
+                g_value[v1] = 0;
+                used[v1] = 1;
+                g_value[v2] = edge_idx;
+                used[v2] = 1;
+                // printf("  - 分配 g[%d] = 0 (初始值)\n", v1);
+                // printf("  - 分配 g[%d] = %d (边序号)\n", v2, edge_idx);
+            } else if (!used[v1]) {
+                g_value[v1] = edge_idx - g_value[v2];
+                used[v1] = 1;
+                // printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
+                //       v1, g_value[v1], edge_idx, v2, g_value[v2]);
+            } else {
+                g_value[v2] = edge_idx - g_value[v1];
+                used[v2] = 1;
+                // printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
+                //       v2, g_value[v2], edge_idx, v1, g_value[v1]);
+            }
+        }
+
+        // printf("\n最终g_value分配结果:\n");
+        // for (int i = 0; i < table_size; i++) {
+        //     if (used[i]) {
+        //         printf("顶点 %d: g_value = %d\n", i, g_value[i]);
+        //     }
+        // }
+
+        // 验证哈希冲突
+        printf("\n开始验证哈希冲突:\n");
+        int *hash_values = (int *)calloc(key_count, sizeof(int));
+        int conflict = 0;
+        for (int i = 0; i < key_count; i++) {
+            int v1 = hash_function(keys[i], seed1, table_size);
+            int v2 = hash_function(keys[i], seed2, table_size);
+            int h = g_value[v1] + g_value[v2];
+            if (h < 0) h += key_count;  // 确保结果为非负
+            h %= key_count;
+            
+            // printf("字符串 %s: h(%d,%d) = (%d + %d) %% %d = %d\n",
+            //       keys[i], v1, v2, g_value[v1], g_value[v2], key_count, h);
+            
+            if (hash_values[h]) {
+                printf("  ! 冲突: 与字符串 %s 哈希值相同(%d)\n",
+                       keys[hash_values[h]-1], h);
+                conflict = 1;
+            } else {
+                hash_values[h] = i+1;
+            }
+        }
+
         if (!conflict) {
-            printf("No conflict for 10000 random strings.\n");
+            printf("\n验证通过，无哈希冲突\n");
+        } else {
+            printf("\n警告: 检测到哈希冲突\n");
         }
-        free(hash_used);
-        free(mphf.g_value);
-    } else {
-        printf("MPHF build failed!\n");
-    }
 
-    for (int i = 0; i < random_key_count; i++) {
-        free(random_keys[i]);
+        free(g_value);
+        free(used);
+        free(hash_values);
     }
-    free(random_keys);
-
+    
+    // 清理资源
+    free(removed_order);
+    graph_free(&g);
+    for (int i = 0; i < key_count; i++) {
+        free(keys[i]);
+    }
+    free(keys);
+    
     return 0;
 }
