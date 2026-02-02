@@ -5,8 +5,6 @@
 #include <time.h>
 #include <stdint.h>
 
-#define DEBUG 0  // 调试开关，1为开启，0为关闭
-
 int mphf_last_error = 0;
 
 /* 内部数据结构 */
