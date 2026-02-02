@@ -4,26 +4,51 @@
 #include <time.h>
 #include "mphf.h"
 
-// 生成互不相同的随机字符串
-void generate_unique_random_strings(char **keys, int key_count, int min_len, int max_len) {
-    for (int i = 0; i < key_count; ) {
-        int len = min_len + rand() % (max_len - min_len + 1);
-        for (int j = 0; j < len; j++) {
-            keys[i][j] = 'a' + rand() % 26;
-        }
-        keys[i][len] = '\0';
-        // 检查是否重复
-        int duplicate = 0;
-        for (int k = 0; k < i; k++) {
-            if (strcmp(keys[i], keys[k]) == 0) {
-                duplicate = 1;
-                break;
-            }
-        }
-        if (!duplicate) {
-            i++;
-        }
+
+// 生成所有中英文Unicode码点的UTF-8字符串
+// 范围：ASCII可见字符（0x20~0x7E），CJK统一汉字（0x4E00~0x9FFF），扩展A/B/C/D/E/F，兼容汉字等
+#include <stdint.h>
+
+
+
+// 生成所有有效Unicode码点（U+0000~U+10FFFF，排除代理区）
+int generate_all_unicode_items(mphf_item_t **items) {
+    int total = 0;
+    // 统计有效码点数（排除U+D800~U+DFFF代理区）
+    for (int cp = 0; cp <= 0x10FFFF; cp++) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+        total++;
     }
+    *items = (mphf_item_t *)malloc(total * sizeof(mphf_item_t));
+    int idx = 0;
+    for (int cp = 0; cp <= 0x10FFFF; cp++) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+        unsigned char *buf = (unsigned char *)malloc(4);
+        int len = 0;
+        if (cp <= 0x7F) {
+            buf[0] = cp;
+            len = 1;
+        } else if (cp <= 0x7FF) {
+            buf[0] = 0xC0 | ((cp >> 6) & 0x1F);
+            buf[1] = 0x80 | (cp & 0x3F);
+            len = 2;
+        } else if (cp <= 0xFFFF) {
+            buf[0] = 0xE0 | ((cp >> 12) & 0x0F);
+            buf[1] = 0x80 | ((cp >> 6) & 0x3F);
+            buf[2] = 0x80 | (cp & 0x3F);
+            len = 3;
+        } else {
+            buf[0] = 0xF0 | ((cp >> 18) & 0x07);
+            buf[1] = 0x80 | ((cp >> 12) & 0x3F);
+            buf[2] = 0x80 | ((cp >> 6) & 0x3F);
+            buf[3] = 0x80 | (cp & 0x3F);
+            len = 4;
+        }
+        (*items)[idx].data = buf;
+        (*items)[idx].len = len;
+        idx++;
+    }
+    return total;
 }
 
 #ifdef _WIN32
@@ -36,62 +61,33 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    srand(time(NULL));
-    int key_count = 10;  // 字符串数量
-    int min_len = 1, max_len = 3;  // 字符串最小/最大长度
-    
-    // 生成随机字符串
-    char **keys = (char **)malloc(key_count * sizeof(char *));
-    for (int i = 0; i < key_count; i++) {
-        keys[i] = (char *)malloc((max_len + 1) * sizeof(char));
-    }
-    generate_unique_random_strings(keys, key_count, min_len, max_len);
+    mphf_item_t *items = NULL;
+    int key_count = generate_all_unicode_items(&items);
+    printf("生成所有有效Unicode码点，共%d个\n", key_count);
 
-    printf("生成 %d 个随机字符串:\n", key_count);
-    for(int i = 0; i < key_count; i++) {
-        printf("index %d key : %s\n", i, keys[i]);
-    }
-    
-    // 创建并构建MPHF
     mphf_t mphf;
-    if (mphf_build((const char**)keys, key_count, &mphf)) {
+    if (mphf_build(&mphf, items, key_count)) {
         printf("\nMPHF构建成功！\n");
         printf("种子1: %llu\n", mphf.seed1);
         printf("种子2: %llu\n", mphf.seed2);
-        
-        // 验证哈希冲突
-        printf("\n验证哈希冲突:\n");
-        int *hash_values = (int *)calloc(key_count, sizeof(int));
-        int conflict = 0;
-        for (int i = 0; i < key_count; i++) {
-            int h = mphf_hash(&mphf, keys[i]);
-            printf("i : %d hash %d key : %s\n", i, h, keys[i]);
-            if (hash_values[h]) {
-                printf("  ! 冲突: 与字符串 %s 哈希值相同(%d)\n",
-                       keys[hash_values[h]-1], h);
-                conflict = 1;
-            } else {
-                hash_values[h] = i+1;
-            }
+
+        printf("\n部分哈希值示例（前100个）：\n");
+        for (int i = 0; i < 100 && i < key_count; i++) {
+            int h = mphf_hash(&mphf, items[i].data, items[i].len);
+            printf("U+%06X hash=%d\n", i < 0xD800 ? i : i + 0x800, h);
         }
-        if (!conflict) {
-            printf("验证通过，无哈希冲突\n");
-        } else {
-            printf("警告: 检测到哈希冲突\n");
-        }
-        free(hash_values);
-        
-        // 释放MPHF资源
+
         mphf_free(&mphf);
     } else {
         printf("\n达到最大重试次数，无法生成无环图\n");
     }
-    
-    // 清理资源
+
     for (int i = 0; i < key_count; i++) {
-        free(keys[i]);
+        free((void*)items[i].data);
     }
-    free(keys);
-    
+    free(items);
+
+    return 0;
+
     return 0;
 }

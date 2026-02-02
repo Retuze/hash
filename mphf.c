@@ -30,8 +30,8 @@ static void graph_init(graph *g, int edge_num_max);
 static void graph_free(graph *g);
 static bool graph_add_edge(graph *g, int u, int v);
 static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count);
-static int hash_function(const char* key, unsigned long long seed, int range);
-static bool has_duplicate_keys(const char* keys[], int key_count);
+static int hash_function(const void* key, int key_len, unsigned long long seed, int range);
+static bool has_duplicate_keys(const void* keys[], const int key_lens[], int key_count);
 
 /* 图操作实现 */
 
@@ -188,11 +188,12 @@ static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_
 
 /* 哈希函数和辅助函数 */
 
-static int hash_function(const char* key, unsigned long long seed, int range) {
+static int hash_function(const void* key, int key_len, unsigned long long seed, int range) {
     if (range <= 0) range = 1;
     unsigned long long hash = seed;
-    for (int i = 0; key[i] != '\0'; i++) {
-        unsigned long long weighted_char = (unsigned char)key[i];
+    const unsigned char* p = (const unsigned char*)key;
+    for (int i = 0; i < key_len; i++) {
+        unsigned long long weighted_char = p[i];
         weighted_char ^= (hash >> 33);
         weighted_char *= 0xff51afd7ed558ccdULL;
         weighted_char ^= (weighted_char >> 33);
@@ -204,45 +205,77 @@ static int hash_function(const char* key, unsigned long long seed, int range) {
     return (int)((hash & 0x7FFFFFFF) % range);
 }
 
-static int cmp_str(const void *a, const void *b) {
-    return strcmp(*(const char **)a, *(const char **)b);
+static int cmp_buf(const void *a, const void *b, void* lens) {
+    const void* pa = *(const void**)a;
+    const void* pb = *(const void**)b;
+    const int* lens_arr = (const int*)lens;
+    int ia = (int)((const void**)a - (const void**)lens_arr);
+    int ib = (int)((const void**)b - (const void**)lens_arr);
+    int la = lens_arr[ia];
+    int lb = lens_arr[ib];
+    int cmp = memcmp(pa, pb, la < lb ? la : lb);
+    if (cmp != 0) return cmp;
+    return la - lb;
 }
 
-static bool has_duplicate_keys(const char* keys[], int key_count) {
-    char **tmp = (char **)malloc(key_count * sizeof(char *));
-    for (int i = 0; i < key_count; i++) tmp[i] = (char *)keys[i];
-    qsort(tmp, key_count, sizeof(char *), cmp_str);
+typedef struct {
+    const void* data;
+    int len;
+} _dup_item_t;
+
+static int _dup_cmp(const void* a, const void* b) {
+    const _dup_item_t* ia = (const _dup_item_t*)a;
+    const _dup_item_t* ib = (const _dup_item_t*)b;
+    if (ia->len != ib->len) return ia->len - ib->len;
+    return memcmp(ia->data, ib->data, ia->len);
+}
+
+static bool has_duplicate_keys(const void* keys[], const int key_lens[], int key_count) {
+    _dup_item_t* arr = (_dup_item_t*)malloc(key_count * sizeof(_dup_item_t));
+    for (int i = 0; i < key_count; i++) {
+        arr[i].data = keys[i];
+        arr[i].len = key_lens[i];
+    }
+    qsort(arr, key_count, sizeof(_dup_item_t), _dup_cmp);
     for (int i = 1; i < key_count; i++) {
-        if (strcmp(tmp[i], tmp[i-1]) == 0) {
-            free(tmp);
+        if (_dup_cmp(&arr[i-1], &arr[i]) == 0) {
+            free(arr);
             return true;
         }
     }
-    free(tmp);
+    free(arr);
     return false;
 }
 
 /* 公开API实现 */
 
-bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
+bool mphf_build(mphf_t* mphf, const mphf_item_t* items, int key_count) {
     int table_size = key_count * 2;
     int max_retry = 1000;
-    
-    // 初始化随机数种子（如果需要的话）
+
     static bool seed_initialized = false;
     if (!seed_initialized) {
         srand((unsigned int)time(NULL));
         seed_initialized = true;
     }
-    
+
     int* removed_order = (int*)malloc(key_count * sizeof(int));
     int removed_count = 0;
 
-    if (has_duplicate_keys(keys, key_count)) {
+    // 构造keys和lens临时数组用于复用原有判重逻辑
+    const void** keys = (const void**)malloc(key_count * sizeof(void*));
+    int* key_lens = (int*)malloc(key_count * sizeof(int));
+    for (int i = 0; i < key_count; i++) {
+        keys[i] = items[i].data;
+        key_lens[i] = items[i].len;
+    }
+    if (has_duplicate_keys(keys, key_lens, key_count)) {
 #if DEBUG
         printf("error: duplicate key exists, abort build.\n");
 #endif
         free(removed_order);
+        free(keys);
+        free(key_lens);
         return false;
     }
 
@@ -260,27 +293,27 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
 
         bool self_loop = false;
         for (int i = 0; i < key_count; i++) {
-            int v1 = hash_function(keys[i], seed1, table_size);
-            int v2 = hash_function(keys[i], seed2, table_size);
-            
+            int v1 = hash_function(items[i].data, items[i].len, seed1, table_size);
+            int v2 = hash_function(items[i].data, items[i].len, seed2, table_size);
+
             if (v1 == v2) {
 #if DEBUG
-                printf("字符串 %s 生成自环顶点 %d-%d\n", keys[i], v1, v2);
+                printf("key %d 生成自环顶点 %d-%d\n", i, v1, v2);
 #endif
                 self_loop = true;
                 break;
             }
-            
+
             if (!graph_add_edge(&g, v1, v2)) {
 #if DEBUG
-                printf("边 %d - %d 已存在 (来自字符串: %s)\n", v1, v2, keys[i]);
+                printf("边 %d - %d 已存在 (来自key: %d)\n", v1, v2, i);
 #endif
                 self_loop = true;
                 break;
             }
 #if DEBUG
-            printf("添加边 %d: %d - %d (来自字符串: %s)\n",
-                  g.edge_num-1, v1, v2, keys[i]);
+            printf("添加边 %d: %d - %d (来自key: %d)\n",
+                  g.edge_num-1, v1, v2, i);
 #endif
         }
         if (self_loop) {
@@ -295,29 +328,27 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
         printf("\n边剥离顺序:\n");
         for (int i = 0; i < removed_count; i++) {
             int edge_idx = removed_order[i];
-            printf("%d: %d - %d (来自字符串: %s)\n",
-                  i, g.edges[edge_idx][0], g.edges[edge_idx][1], keys[edge_idx]);
+            printf("%d: %d - %d (来自key: %d)\n",
+                  i, g.edges[edge_idx][0], g.edges[edge_idx][1], edge_idx);
         }
         printf("\n图%s环\n", has_cycle ? "有" : "无");
 #endif
 
         if (!has_cycle && removed_count == key_count) {
-            // 分配g_value数组
             int* g_value = (int*)calloc(table_size, sizeof(int));
             int* used = (int*)calloc(table_size, sizeof(int));
 
 #if DEBUG
             printf("\n开始分配g_value:\n");
 #endif
-            // 逆序处理剥离顺序，分配g_value
             for (int i = removed_count - 1; i >= 0; i--) {
                 int edge_idx = removed_order[i];
                 int v1 = g.edges[edge_idx][0];
                 int v2 = g.edges[edge_idx][1];
-                
+
 #if DEBUG
-                printf("\n处理边 %d: %d-%d (来自字符串: %s)\n",
-                      edge_idx, v1, v2, keys[edge_idx]);
+                printf("\n处理边 %d: %d-%d (来自key: %d)\n",
+                      edge_idx, v1, v2, edge_idx);
 #endif
                 if (!used[v1] && !used[v2]) {
                     g_value[v1] = 0;
@@ -362,17 +393,21 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
             free(used);
             free(removed_order);
             graph_free(&g);
+            free(keys);
+            free(key_lens);
             return true;
         }
         graph_free(&g);
     }
     free(removed_order);
+    free(keys);
+    free(key_lens);
     return false;
 }
 
-int mphf_hash(const mphf_t* mphf, const char* key) {
-    int v1 = hash_function(key, mphf->seed1, mphf->g_size);
-    int v2 = hash_function(key, mphf->seed2, mphf->g_size);
+int mphf_hash(const mphf_t* mphf, const void* key, int key_len) {
+    int v1 = hash_function(key, key_len, mphf->seed1, mphf->g_size);
+    int v2 = hash_function(key, key_len, mphf->seed2, mphf->g_size);
     int key_count = mphf->g_size / 2;
     return (mphf->g_value[v1] + mphf->g_value[v2]) % key_count;
 }
