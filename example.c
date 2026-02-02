@@ -12,19 +12,19 @@
 
 
 // 生成所有有效Unicode码点（U+0000~U+10FFFF，排除代理区）
-int generate_all_unicode_items(mphf_item_t **items) {
-    int total = 0;
+int32_t generate_all_unicode_items(mphf_item_t **items) {
+    int32_t total = 0;
     // 统计有效码点数（排除U+D800~U+DFFF代理区）
-    for (int cp = 0; cp <= 0x10FFFF; cp++) {
+    for (int32_t cp = 0; cp <= 0x10FFFF; cp++) {
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;
         total++;
     }
     *items = (mphf_item_t *)malloc(total * sizeof(mphf_item_t));
-    int idx = 0;
-    for (int cp = 0; cp <= 0x10FFFF; cp++) {
+    int32_t idx = 0;
+    for (int32_t cp = 0; cp <= 0x10FFFF; cp++) {
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;
         unsigned char *buf = (unsigned char *)malloc(4);
-        int len = 0;
+        int32_t len = 0;
         if (cp <= 0x7F) {
             buf[0] = cp;
             len = 1;
@@ -62,18 +62,18 @@ int main() {
 #endif
 
     mphf_item_t *items = NULL;
-    int key_count = generate_all_unicode_items(&items);
+    int32_t key_count = generate_all_unicode_items(&items);
     printf("生成所有有效Unicode码点，共%d个\n", key_count);
 
     mphf_t mphf;
-    if (mphf_build(&mphf, items, key_count)) {
+    if (mphf_build(&mphf, items, key_count) == 0) {
         printf("\nMPHF构建成功！\n");
         printf("种子1: %llu\n", mphf.seed1);
         printf("种子2: %llu\n", mphf.seed2);
 
         printf("\n部分哈希值示例（前100个）：\n");
-        for (int i = 0; i < 100 && i < key_count; i++) {
-            int h = mphf_hash(&mphf, items[i].data, items[i].len);
+        for (int32_t i = 0; i < 100 && i < key_count; i++) {
+            int32_t h = mphf_hash(&mphf, items[i].data, items[i].len);
             printf("U+%06X hash=%d\n", i < 0xD800 ? i : i + 0x800, h);
         }
 
@@ -82,12 +82,10 @@ int main() {
         printf("\n达到最大重试次数，无法生成无环图\n");
     }
 
-    for (int i = 0; i < key_count; i++) {
+    for (int32_t i = 0; i < key_count; i++) {
         free((void*)items[i].data);
     }
     free(items);
-
-    return 0;
 
     return 0;
 }

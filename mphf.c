@@ -3,55 +3,58 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdint.h>
 
 #define DEBUG 0  // 调试开关，1为开启，0为关闭
+
+int mphf_last_error = 0;
 
 /* 内部数据结构 */
 
 typedef struct adj_list {
-    int *nodes;   // 邻接顶点数组
-    int *indexs;  // 边的索引数组
-    int capacity; // 节点容量
-    int size;     // 节点大小
+    int32_t *nodes;   // 邻接顶点数组
+    int32_t *indexs;  // 边的索引数组
+    int32_t capacity; // 节点容量
+    int32_t size;     // 节点大小
 } adj_list;
 
 typedef struct graph {
-    int node_num;
-    int edge_num;
-    int edge_num_max;
-    int **edges;
+    int32_t node_num;
+    int32_t edge_num;
+    int32_t edge_num_max;
+    int32_t **edges;
     adj_list *list;
     bool *node_exists;
 } graph;
 
 /* 内部函数声明 */
 
-static void graph_init(graph *g, int edge_num_max);
+static void graph_init(graph *g, int32_t edge_num_max);
 static void graph_free(graph *g);
-static bool graph_add_edge(graph *g, int u, int v);
-static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count);
-static int hash_function(const void* key, int key_len, unsigned long long seed, int range);
-static bool has_duplicate_keys(const void* keys[], const int key_lens[], int key_count);
+static bool graph_add_edge(graph *g, int32_t u, int32_t v);
+static bool graph_edge_removal_order(graph *g, int32_t *removed_order, int32_t *removed_count);
+static int32_t hash_function(const void* key, int32_t key_len, uint64_t seed, int32_t range);
+static bool has_duplicate_keys(const void* keys[], const int32_t key_lens[], int32_t key_count);
 
 /* 图操作实现 */
 
-static void graph_init(graph *g, int edge_num_max)
+static void graph_init(graph *g, int32_t edge_num_max)
 {
     g->node_num = 0;
     g->edge_num = 0;
     g->edge_num_max = edge_num_max;
-    g->edges = (int **)malloc(edge_num_max * sizeof(int *));
-    int edge_has_node_num = 2;
-    for (int i = 0; i < edge_num_max; i++)
+    g->edges = (int32_t **)malloc(edge_num_max * sizeof(int32_t *));
+    int32_t edge_has_node_num = 2;
+    for (int32_t i = 0; i < edge_num_max; i++)
     {
-        g->edges[i] = (int *)malloc(edge_has_node_num * sizeof(int));
+        g->edges[i] = (int32_t *)malloc(edge_has_node_num * sizeof(int32_t));
     }
     g->list = (adj_list *)malloc(edge_num_max * 2 * sizeof(adj_list));
-    int node_capacity = 2;
-    for (int i = 0; i < edge_num_max * 2; i++)
+    int32_t node_capacity = 2;
+    for (int32_t i = 0; i < edge_num_max * 2; i++)
     {
-        g->list[i].nodes = (int *)malloc(node_capacity * sizeof(int));
-        g->list[i].indexs = (int *)malloc(node_capacity * sizeof(int));
+        g->list[i].nodes = (int32_t *)malloc(node_capacity * sizeof(int32_t));
+        g->list[i].indexs = (int32_t *)malloc(node_capacity * sizeof(int32_t));
         g->list[i].capacity = node_capacity;
         g->list[i].size = 0;
     }
@@ -60,12 +63,12 @@ static void graph_init(graph *g, int edge_num_max)
 
 static void graph_free(graph *g)
 {
-    for (int i = 0; i < g->edge_num_max; i++)
+    for (int32_t i = 0; i < g->edge_num_max; i++)
     {
         free(g->edges[i]);
     }
     free(g->edges);
-    for (int i = 0; i < g->edge_num_max * 2; i++)
+    for (int32_t i = 0; i < g->edge_num_max * 2; i++)
     {
         free(g->list[i].nodes);
         free(g->list[i].indexs);
@@ -74,7 +77,7 @@ static void graph_free(graph *g)
     free(g->node_exists);
 }
 
-static bool graph_add_edge(graph *g, int u, int v)
+static bool graph_add_edge(graph *g, int32_t u, int32_t v)
 {
     if (g->edge_num >= g->edge_num_max)
     {
@@ -83,7 +86,7 @@ static bool graph_add_edge(graph *g, int u, int v)
     if (u == v) {
         return false;
     }
-    for (int i = 0; i < g->list[u].size; i++)
+    for (int32_t i = 0; i < g->list[u].size; i++)
     {
         if (g->list[u].nodes[i] == v)
         {
@@ -106,15 +109,15 @@ static bool graph_add_edge(graph *g, int u, int v)
     if (list_u->size >= list_u->capacity)
     {
         list_u->capacity *= 2;
-        list_u->nodes = (int *)realloc(list_u->nodes, list_u->capacity * sizeof(int));
-        list_u->indexs = (int *)realloc(list_u->indexs, list_u->capacity * sizeof(int));
+        list_u->nodes = (int32_t *)realloc(list_u->nodes, list_u->capacity * sizeof(int32_t));
+        list_u->indexs = (int32_t *)realloc(list_u->indexs, list_u->capacity * sizeof(int32_t));
     }
 
     if (list_v->size >= list_v->capacity)
     {
         list_v->capacity *= 2;
-        list_v->nodes = (int *)realloc(list_v->nodes, list_v->capacity * sizeof(int));
-        list_v->indexs = (int *)realloc(list_v->indexs, list_v->capacity * sizeof(int));
+        list_v->nodes = (int32_t *)realloc(list_v->nodes, list_v->capacity * sizeof(int32_t));
+        list_v->indexs = (int32_t *)realloc(list_v->indexs, list_v->capacity * sizeof(int32_t));
     }
 
     list_u->nodes[list_u->size] = v;
@@ -131,36 +134,36 @@ static bool graph_add_edge(graph *g, int u, int v)
     return true;
 }
 
-static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count)
+static bool graph_edge_removal_order(graph *g, int32_t *removed_order, int32_t *removed_count)
 {
-    int max_node = g->edge_num_max * 2;
-    int *degree = (int *)calloc(max_node, sizeof(int));
-    int *edge_removed = (int *)calloc(g->edge_num_max, sizeof(int));
-    int *queue = (int *)malloc(max_node * sizeof(int));
-    int front = 0, rear = 0;
+    int32_t max_node = g->edge_num_max * 2;
+    int32_t *degree = (int32_t *)calloc(max_node, sizeof(int32_t));
+    int32_t *edge_removed = (int32_t *)calloc(g->edge_num_max, sizeof(int32_t));
+    int32_t *queue = (int32_t *)malloc(max_node * sizeof(int32_t));
+    int32_t front = 0, rear = 0;
 
-    for (int i = 0; i < max_node; i++) {
+    for (int32_t i = 0; i < max_node; i++) {
         if (g->node_exists[i]) {
             degree[i] = g->list[i].size;
         }
     }
 
-    for (int i = 0; i < max_node; i++) {
+    for (int32_t i = 0; i < max_node; i++) {
         if (g->node_exists[i] && degree[i] == 1) {
             queue[rear++] = i;
         }
     }
 
-    int processed_edges = 0;
+    int32_t processed_edges = 0;
     *removed_count = 0;
 
     while (front < rear) {
-        int node = queue[front++];
+        int32_t node = queue[front++];
         if (degree[node] == 0) continue;
 
-        for (int i = 0; i < g->list[node].size; i++) {
-            int neighbor = g->list[node].nodes[i];
-            int edge_idx = g->list[node].indexs[i];
+        for (int32_t i = 0; i < g->list[node].size; i++) {
+            int32_t neighbor = g->list[node].nodes[i];
+            int32_t edge_idx = g->list[node].indexs[i];
             if (edge_removed[edge_idx]) continue;
 
             removed_order[(*removed_count)++] = edge_idx;
@@ -188,12 +191,12 @@ static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_
 
 /* 哈希函数和辅助函数 */
 
-static int hash_function(const void* key, int key_len, unsigned long long seed, int range) {
+static int32_t hash_function(const void* key, int32_t key_len, uint64_t seed, int32_t range) {
     if (range <= 0) range = 1;
-    unsigned long long hash = seed;
-    const unsigned char* p = (const unsigned char*)key;
-    for (int i = 0; i < key_len; i++) {
-        unsigned long long weighted_char = p[i];
+    uint64_t hash = seed;
+    const uint8_t* p = (const uint8_t*)key;
+    for (int32_t i = 0; i < key_len; i++) {
+        uint64_t weighted_char = p[i];
         weighted_char ^= (hash >> 33);
         weighted_char *= 0xff51afd7ed558ccdULL;
         weighted_char ^= (weighted_char >> 33);
@@ -202,42 +205,42 @@ static int hash_function(const void* key, int key_len, unsigned long long seed, 
         hash = (hash << 31) | (hash >> 33);
         hash *= 0x9e3779b97f4a7c15ULL;
     }
-    return (int)((hash & 0x7FFFFFFF) % range);
+    return (int32_t)((hash & 0x7FFFFFFF) % range);
 }
 
 static int cmp_buf(const void *a, const void *b, void* lens) {
     const void* pa = *(const void**)a;
     const void* pb = *(const void**)b;
-    const int* lens_arr = (const int*)lens;
-    int ia = (int)((const void**)a - (const void**)lens_arr);
-    int ib = (int)((const void**)b - (const void**)lens_arr);
-    int la = lens_arr[ia];
-    int lb = lens_arr[ib];
-    int cmp = memcmp(pa, pb, la < lb ? la : lb);
+    const int32_t* lens_arr = (const int32_t*)lens;
+    int32_t ia = (int32_t)((const void**)a - (const void**)lens_arr);
+    int32_t ib = (int32_t)((const void**)b - (const void**)lens_arr);
+    int32_t la = lens_arr[ia];
+    int32_t lb = lens_arr[ib];
+    int32_t cmp = memcmp(pa, pb, la < lb ? la : lb);
     if (cmp != 0) return cmp;
     return la - lb;
 }
 
 typedef struct {
-    const void* data;
-    int len;
-} _dup_item_t;
+    const void* key_ptr;
+    int32_t key_len;
+} _dup_key_t;
 
 static int _dup_cmp(const void* a, const void* b) {
-    const _dup_item_t* ia = (const _dup_item_t*)a;
-    const _dup_item_t* ib = (const _dup_item_t*)b;
-    if (ia->len != ib->len) return ia->len - ib->len;
-    return memcmp(ia->data, ib->data, ia->len);
+    const _dup_key_t* ia = (const _dup_key_t*)a;
+    const _dup_key_t* ib = (const _dup_key_t*)b;
+    if (ia->key_len != ib->key_len) return ia->key_len - ib->key_len;
+    return memcmp(ia->key_ptr, ib->key_ptr, ia->key_len);
 }
 
-static bool has_duplicate_keys(const void* keys[], const int key_lens[], int key_count) {
-    _dup_item_t* arr = (_dup_item_t*)malloc(key_count * sizeof(_dup_item_t));
-    for (int i = 0; i < key_count; i++) {
-        arr[i].data = keys[i];
-        arr[i].len = key_lens[i];
+static bool has_duplicate_keys(const void* key_ptrs[], const int32_t key_lens[], int32_t num_keys) {
+    _dup_key_t* arr = (_dup_key_t*)malloc(num_keys * sizeof(_dup_key_t));
+    for (int32_t i = 0; i < num_keys; i++) {
+        arr[i].key_ptr = key_ptrs[i];
+        arr[i].key_len = key_lens[i];
     }
-    qsort(arr, key_count, sizeof(_dup_item_t), _dup_cmp);
-    for (int i = 1; i < key_count; i++) {
+    qsort(arr, num_keys, sizeof(_dup_key_t), _dup_cmp);
+    for (int32_t i = 1; i < num_keys; i++) {
         if (_dup_cmp(&arr[i-1], &arr[i]) == 0) {
             free(arr);
             return true;
@@ -249,9 +252,15 @@ static bool has_duplicate_keys(const void* keys[], const int key_lens[], int key
 
 /* 公开API实现 */
 
-bool mphf_build(mphf_t* mphf, const mphf_item_t* items, int key_count) {
-    int table_size = key_count * 2;
-    int max_retry = 1000;
+int mphf_build(mphf_t* mphf, const mphf_key_t* keys, int32_t num_keys) {
+    mphf_last_error = MPHF_OK;
+    if (!mphf || !keys || num_keys <= 0) {
+        mphf_last_error = MPHF_ERR_PARAM;
+        fprintf(stderr, "[MPHF_ERR_%d] invalid parameter: mphf=%p, keys=%p, num_keys=%d\n", mphf_last_error, (void*)mphf, (void*)keys, num_keys);
+        return MPHF_ERR_PARAM;
+    }
+    int32_t table_size = num_keys * 2;
+    int32_t max_retry = 1000;
 
     static bool seed_initialized = false;
     if (!seed_initialized) {
@@ -259,62 +268,46 @@ bool mphf_build(mphf_t* mphf, const mphf_item_t* items, int key_count) {
         seed_initialized = true;
     }
 
-    int* removed_order = (int*)malloc(key_count * sizeof(int));
-    int removed_count = 0;
+    int32_t* removed_order = (int32_t*)malloc(num_keys * sizeof(int32_t));
+    int32_t removed_count = 0;
 
-    // 构造keys和lens临时数组用于复用原有判重逻辑
-    const void** keys = (const void**)malloc(key_count * sizeof(void*));
-    int* key_lens = (int*)malloc(key_count * sizeof(int));
-    for (int i = 0; i < key_count; i++) {
-        keys[i] = items[i].data;
-        key_lens[i] = items[i].len;
+    // 构造key_ptrs和key_lens临时数组用于复用原有判重逻辑
+    const void** key_ptrs = (const void**)malloc(num_keys * sizeof(void*));
+    int32_t* key_lens = (int32_t*)malloc(num_keys * sizeof(int32_t));
+    for (int32_t i = 0; i < num_keys; i++) {
+        key_ptrs[i] = keys[i].key_ptr;
+        key_lens[i] = keys[i].key_len;
     }
-    if (has_duplicate_keys(keys, key_lens, key_count)) {
-#if DEBUG
-        printf("error: duplicate key exists, abort build.\n");
-#endif
+    if (has_duplicate_keys(key_ptrs, key_lens, num_keys)) {
+        mphf_last_error = MPHF_ERR_DUPLICATE;
+        fprintf(stderr, "[MPHF_ERR_%d] key duplicate detected, abort build.\n", mphf_last_error);
         free(removed_order);
-        free(keys);
+        free(key_ptrs);
         free(key_lens);
-        return false;
+        return MPHF_ERR_DUPLICATE;
     }
 
-    for (int retry = 0; retry < max_retry; retry++) {
-        unsigned long long seed1 = ((unsigned long long)rand() << 32) | rand();
-        unsigned long long seed2 = ((unsigned long long)rand() << 32) | rand();
+    for (int32_t retry = 0; retry < max_retry; retry++) {
+        uint64_t seed1 = ((uint64_t)rand() << 32) | rand();
+        uint64_t seed2 = ((uint64_t)rand() << 32) | rand();
 
         graph g;
-        graph_init(&g, key_count);
-
-#if DEBUG
-        printf("\n尝试 %d: 使用种子 %llu 和 %llu\n", retry+1, seed1, seed2);
-        printf("生成的边:\n");
-#endif
+        graph_init(&g, num_keys);
 
         bool self_loop = false;
-        for (int i = 0; i < key_count; i++) {
-            int v1 = hash_function(items[i].data, items[i].len, seed1, table_size);
-            int v2 = hash_function(items[i].data, items[i].len, seed2, table_size);
+        for (int32_t i = 0; i < num_keys; i++) {
+            int32_t v1 = hash_function(keys[i].key_ptr, keys[i].key_len, seed1, table_size);
+            int32_t v2 = hash_function(keys[i].key_ptr, keys[i].key_len, seed2, table_size);
 
             if (v1 == v2) {
-#if DEBUG
-                printf("key %d 生成自环顶点 %d-%d\n", i, v1, v2);
-#endif
                 self_loop = true;
                 break;
             }
 
             if (!graph_add_edge(&g, v1, v2)) {
-#if DEBUG
-                printf("边 %d - %d 已存在 (来自key: %d)\n", v1, v2, i);
-#endif
                 self_loop = true;
                 break;
             }
-#if DEBUG
-            printf("添加边 %d: %d - %d (来自key: %d)\n",
-                  g.edge_num-1, v1, v2, i);
-#endif
         }
         if (self_loop) {
             graph_free(&g);
@@ -324,66 +317,27 @@ bool mphf_build(mphf_t* mphf, const mphf_item_t* items, int key_count) {
         removed_count = 0;
         bool has_cycle = graph_edge_removal_order(&g, removed_order, &removed_count);
 
-#if DEBUG
-        printf("\n边剥离顺序:\n");
-        for (int i = 0; i < removed_count; i++) {
-            int edge_idx = removed_order[i];
-            printf("%d: %d - %d (来自key: %d)\n",
-                  i, g.edges[edge_idx][0], g.edges[edge_idx][1], edge_idx);
-        }
-        printf("\n图%s环\n", has_cycle ? "有" : "无");
-#endif
+        if (!has_cycle && removed_count == num_keys) {
+            int32_t* g_value = (int32_t*)calloc(table_size, sizeof(int32_t));
+            int32_t* used = (int32_t*)calloc(table_size, sizeof(int32_t));
 
-        if (!has_cycle && removed_count == key_count) {
-            int* g_value = (int*)calloc(table_size, sizeof(int));
-            int* used = (int*)calloc(table_size, sizeof(int));
-
-#if DEBUG
-            printf("\n开始分配g_value:\n");
-#endif
-            for (int i = removed_count - 1; i >= 0; i--) {
-                int edge_idx = removed_order[i];
-                int v1 = g.edges[edge_idx][0];
-                int v2 = g.edges[edge_idx][1];
-
-#if DEBUG
-                printf("\n处理边 %d: %d-%d (来自key: %d)\n",
-                      edge_idx, v1, v2, edge_idx);
-#endif
+            for (int32_t i = removed_count - 1; i >= 0; i--) {
+                int32_t edge_idx = removed_order[i];
+                int32_t v1 = g.edges[edge_idx][0];
+                int32_t v2 = g.edges[edge_idx][1];
                 if (!used[v1] && !used[v2]) {
                     g_value[v1] = 0;
                     used[v1] = 1;
                     g_value[v2] = edge_idx;
                     used[v2] = 1;
-#if DEBUG
-                    printf("  - 分配 g[%d] = 0 (初始值)\n", v1);
-                    printf("  - 分配 g[%d] = %d (边序号)\n", v2, edge_idx);
-#endif
                 } else if (!used[v1]) {
                     g_value[v1] = edge_idx - g_value[v2];
                     used[v1] = 1;
-#if DEBUG
-                    printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
-                          v1, g_value[v1], edge_idx, v2, g_value[v2]);
-#endif
                 } else {
                     g_value[v2] = edge_idx - g_value[v1];
                     used[v2] = 1;
-#if DEBUG
-                    printf("  - 分配 g[%d] = %d (边序号 %d - g[%d] %d)\n",
-                          v2, g_value[v2], edge_idx, v1, g_value[v1]);
-#endif
                 }
             }
-
-#if DEBUG
-            printf("\n最终g_value分配结果:\n");
-            for (int i = 0; i < table_size; i++) {
-                if (used[i]) {
-                    printf("顶点 %d: g_value = %d\n", i, g_value[i]);
-                }
-            }
-#endif
 
             mphf->g_value = g_value;
             mphf->g_size = table_size;
@@ -393,23 +347,25 @@ bool mphf_build(mphf_t* mphf, const mphf_item_t* items, int key_count) {
             free(used);
             free(removed_order);
             graph_free(&g);
-            free(keys);
+            free(key_ptrs);
             free(key_lens);
-            return true;
+            return MPHF_OK;
         }
         graph_free(&g);
     }
+    mphf_last_error = MPHF_ERR_MAXRETRY;
+    fprintf(stderr, "[MPHF_ERR_%d] reach max retry, cannot build acyclic graph.\n", mphf_last_error);
     free(removed_order);
-    free(keys);
+    free(key_ptrs);
     free(key_lens);
-    return false;
+    return MPHF_ERR_MAXRETRY;
 }
 
-int mphf_hash(const mphf_t* mphf, const void* key, int key_len) {
-    int v1 = hash_function(key, key_len, mphf->seed1, mphf->g_size);
-    int v2 = hash_function(key, key_len, mphf->seed2, mphf->g_size);
-    int key_count = mphf->g_size / 2;
-    return (mphf->g_value[v1] + mphf->g_value[v2]) % key_count;
+int32_t mphf_hash(const mphf_t* mphf, const void* key_ptr, int32_t key_len) {
+    int32_t v1 = hash_function(key_ptr, key_len, mphf->seed1, mphf->g_size);
+    int32_t v2 = hash_function(key_ptr, key_len, mphf->seed2, mphf->g_size);
+    int32_t num_keys = mphf->g_size / 2;
+    return (mphf->g_value[v1] + mphf->g_value[v2]) % num_keys;
 }
 
 void mphf_free(mphf_t* mphf) {
