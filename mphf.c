@@ -1,21 +1,21 @@
+#include "mphf.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 
 #define DEBUG 0  // 调试开关，1为开启，0为关闭
 
-typedef struct adj_list
-{
+/* 内部数据结构 */
+
+typedef struct adj_list {
     int *nodes;   // 邻接顶点数组
     int *indexs;  // 边的索引数组
     int capacity; // 节点容量
     int size;     // 节点大小
 } adj_list;
 
-typedef struct graph
-{
+typedef struct graph {
     int node_num;
     int edge_num;
     int edge_num_max;
@@ -24,8 +24,18 @@ typedef struct graph
     bool *node_exists;
 } graph;
 
-// 初始化图结构体
-void graph_init(graph *g, int edge_num_max)
+/* 内部函数声明 */
+
+static void graph_init(graph *g, int edge_num_max);
+static void graph_free(graph *g);
+static bool graph_add_edge(graph *g, int u, int v);
+static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count);
+static int hash_function(const char* key, unsigned long long seed, int range);
+static bool has_duplicate_keys(const char* keys[], int key_count);
+
+/* 图操作实现 */
+
+static void graph_init(graph *g, int edge_num_max)
 {
     g->node_num = 0;
     g->edge_num = 0;
@@ -48,7 +58,7 @@ void graph_init(graph *g, int edge_num_max)
     g->node_exists = (bool *)calloc(edge_num_max * 2, sizeof(bool));
 }
 
-void graph_free(graph *g)
+static void graph_free(graph *g)
 {
     for (int i = 0; i < g->edge_num_max; i++)
     {
@@ -64,8 +74,7 @@ void graph_free(graph *g)
     free(g->node_exists);
 }
 
-// 添加边到图中，返回true表示添加成功，false表示重复或自环
-bool graph_add_edge(graph *g, int u, int v)
+static bool graph_add_edge(graph *g, int u, int v)
 {
     if (g->edge_num >= g->edge_num_max)
     {
@@ -122,33 +131,7 @@ bool graph_add_edge(graph *g, int u, int v)
     return true;
 }
 
-// dfs遍历无向图，判断是否有环
-bool graph_dfs(graph *g, int node, int parent, int *visited)
-{
-    visited[node] = 1;
-
-    for (int i = 0; i < g->list[node].size; i++)
-    {
-        int neighbor = g->list[node].nodes[i];
-        if (!visited[neighbor])
-        {
-            if (graph_dfs(g, neighbor, node, visited))
-            {
-                return true;
-            }
-        }
-        else if (neighbor != parent)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-// 按顺序输出无向图剥离后的边（无环则输出全部边的剥离顺序，有环则输出到无法剥离为止）
-// removed_order: 输出边的索引顺序，removed_count: 实际输出的边数
-// 返回值：true=有环，false=无环
-bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count)
+static bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count)
 {
     int max_node = g->edge_num_max * 2;
     int *degree = (int *)calloc(max_node, sizeof(int));
@@ -203,7 +186,8 @@ bool graph_edge_removal_order(graph *g, int *removed_order, int *removed_count)
     return false;
 }
 
-// 哈希函数
+/* 哈希函数和辅助函数 */
+
 static int hash_function(const char* key, unsigned long long seed, int range) {
     if (range <= 0) range = 1;
     unsigned long long hash = seed;
@@ -220,19 +204,11 @@ static int hash_function(const char* key, unsigned long long seed, int range) {
     return (int)((hash & 0x7FFFFFFF) % range);
 }
 
-typedef struct mphf_t {
-    int *g_value;            // g数组
-    int g_size;              // g数组长度
-    unsigned long long seed1;
-    unsigned long long seed2;
-} mphf_t;
-
-// 检查字符串数组中是否有重复
-int cmp_str(const void *a, const void *b) {
+static int cmp_str(const void *a, const void *b) {
     return strcmp(*(const char **)a, *(const char **)b);
 }
 
-bool has_duplicate_keys(const char* keys[], int key_count) {
+static bool has_duplicate_keys(const char* keys[], int key_count) {
     char **tmp = (char **)malloc(key_count * sizeof(char *));
     for (int i = 0; i < key_count; i++) tmp[i] = (char *)keys[i];
     qsort(tmp, key_count, sizeof(char *), cmp_str);
@@ -246,16 +222,26 @@ bool has_duplicate_keys(const char* keys[], int key_count) {
     return false;
 }
 
-// 构建MPHF，输出g_value和种子
+/* 公开API实现 */
+
 bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
     int table_size = key_count * 2;
     int max_retry = 1000;
-    srand((unsigned int)time(NULL));
+    
+    // 初始化随机数种子（如果需要的话）
+    static bool seed_initialized = false;
+    if (!seed_initialized) {
+        srand((unsigned int)time(NULL));
+        seed_initialized = true;
+    }
+    
     int* removed_order = (int*)malloc(key_count * sizeof(int));
     int removed_count = 0;
 
     if (has_duplicate_keys(keys, key_count)) {
+#if DEBUG
         printf("error: duplicate key exists, abort build.\n");
+#endif
         free(removed_order);
         return false;
     }
@@ -384,7 +370,6 @@ bool mphf_build(const char* keys[], int key_count, mphf_t* mphf) {
     return false;
 }
 
-// 查询MPHF哈希值
 int mphf_hash(const mphf_t* mphf, const char* key) {
     int v1 = hash_function(key, mphf->seed1, mphf->g_size);
     int v2 = hash_function(key, mphf->seed2, mphf->g_size);
@@ -392,84 +377,9 @@ int mphf_hash(const mphf_t* mphf, const char* key) {
     return (mphf->g_value[v1] + mphf->g_value[v2]) % key_count;
 }
 
-// 生成互不相同的随机字符串
-void generate_unique_random_strings(char **keys, int key_count, int min_len, int max_len) {
-    for (int i = 0; i < key_count; ) {
-        int len = min_len + rand() % (max_len - min_len + 1);
-        for (int j = 0; j < len; j++) {
-            keys[i][j] = 'a' + rand() % 26;
-        }
-        keys[i][len] = '\0';
-        // 检查是否重复
-        int duplicate = 0;
-        for (int k = 0; k < i; k++) {
-            if (strcmp(keys[i], keys[k]) == 0) {
-                duplicate = 1;
-                break;
-            }
-        }
-        if (!duplicate) {
-            i++;
-        }
+void mphf_free(mphf_t* mphf) {
+    if (mphf && mphf->g_value) {
+        free(mphf->g_value);
+        mphf->g_value = NULL;
     }
-}
-#include <Windows.h>
-// 使用随机字符串生成hash顶点并测试图
-int main() {
-    SetConsoleCP(CP_UTF8);
-    SetConsoleOutputCP(CP_UTF8);
-    srand(time(NULL));
-    int key_count = 100000;  // 字符串数量
-    int min_len = 1, max_len = 16;  // 字符串最小/最大长度
-    int table_size = key_count * 2;  // 顶点数量
-    
-    // 生成随机字符串
-    char **keys = (char **)malloc(key_count * sizeof(char *));
-    for (int i = 0; i < key_count; i++) {
-        keys[i] = (char *)malloc((max_len + 1) * sizeof(char));
-    }
-    generate_unique_random_strings(keys, key_count, min_len, max_len);
-
-    printf("生成 %d 个随机字符串:\n", key_count);
-    
-    mphf_t mphf;
-    if (mphf_build((const char**)keys, key_count, &mphf)) {
-#if 1
-        printf("\nMPHF构建成功！\n");
-        printf("种子1: %llu\n", mphf.seed1);
-        printf("种子2: %llu\n", mphf.seed2);
-        
-        // 验证哈希冲突
-        printf("\n验证哈希冲突:\n");
-        int *hash_values = (int *)calloc(key_count, sizeof(int));
-        int conflict = 0;
-        for (int i = 0; i < key_count; i++) {
-            int h = mphf_hash(&mphf, keys[i]);
-            if (hash_values[h]) {
-                printf("  ! 冲突: 与字符串 %s 哈希值相同(%d)\n",
-                       keys[hash_values[h]-1], h);
-                conflict = 1;
-            } else {
-                hash_values[h] = i+1;
-            }
-        }
-        if (!conflict) {
-            printf("验证通过，无哈希冲突\n");
-        } else {
-            printf("警告: 检测到哈希冲突\n");
-        }
-        free(hash_values);
-        free(mphf.g_value);
-#endif
-    } else {
-        printf("\n达到最大重试次数，无法生成无环图\n");
-    }
-    
-    // 清理资源
-    for (int i = 0; i < key_count; i++) {
-        free(keys[i]);
-    }
-    free(keys);
-    
-    return 0;
 }
