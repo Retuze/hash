@@ -12,40 +12,40 @@
 
 
 // 生成所有有效Unicode码点（U+0000~U+10FFFF，排除代理区）
-int32_t generate_all_unicode_items(mphf_item_t **items) {
+int32_t generate_all_unicode_keys(mphf_key_t **keys) {
     int32_t total = 0;
     // 统计有效码点数（排除U+D800~U+DFFF代理区）
     for (int32_t cp = 0; cp <= 0x10FFFF; cp++) {
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;
         total++;
     }
-    *items = (mphf_item_t *)malloc(total * sizeof(mphf_item_t));
+    *keys = (mphf_key_t *)malloc(total * sizeof(mphf_key_t));
     int32_t idx = 0;
     for (int32_t cp = 0; cp <= 0x10FFFF; cp++) {
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;
         unsigned char *buf = (unsigned char *)malloc(4);
-        int32_t len = 0;
+        int32_t key_len = 0;
         if (cp <= 0x7F) {
             buf[0] = cp;
-            len = 1;
+            key_len = 1;
         } else if (cp <= 0x7FF) {
             buf[0] = 0xC0 | ((cp >> 6) & 0x1F);
             buf[1] = 0x80 | (cp & 0x3F);
-            len = 2;
+            key_len = 2;
         } else if (cp <= 0xFFFF) {
             buf[0] = 0xE0 | ((cp >> 12) & 0x0F);
             buf[1] = 0x80 | ((cp >> 6) & 0x3F);
             buf[2] = 0x80 | (cp & 0x3F);
-            len = 3;
+            key_len = 3;
         } else {
             buf[0] = 0xF0 | ((cp >> 18) & 0x07);
             buf[1] = 0x80 | ((cp >> 12) & 0x3F);
             buf[2] = 0x80 | ((cp >> 6) & 0x3F);
             buf[3] = 0x80 | (cp & 0x3F);
-            len = 4;
+            key_len = 4;
         }
-        (*items)[idx].data = buf;
-        (*items)[idx].len = len;
+        (*keys)[idx].key_ptr = buf;
+        (*keys)[idx].key_len = key_len;
         idx++;
     }
     return total;
@@ -61,19 +61,19 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    mphf_item_t *items = NULL;
-    int32_t key_count = generate_all_unicode_items(&items);
-    printf("生成所有有效Unicode码点，共%d个\n", key_count);
+    mphf_key_t *keys = NULL;
+    int32_t num_keys = generate_all_unicode_keys(&keys);
+    printf("生成所有有效Unicode码点，共%d个\n", num_keys);
 
     mphf_t mphf;
-    if (mphf_build(&mphf, items, key_count) == 0) {
+    if (mphf_build(&mphf, keys, num_keys) == 0) {
         printf("\nMPHF构建成功！\n");
         printf("种子1: %llu\n", mphf.seed1);
         printf("种子2: %llu\n", mphf.seed2);
 
         printf("\n部分哈希值示例（前100个）：\n");
-        for (int32_t i = 0; i < 100 && i < key_count; i++) {
-            int32_t h = mphf_hash(&mphf, items[i].data, items[i].len);
+        for (int32_t i = 0; i < 100 && i < num_keys; i++) {
+            int32_t h = mphf_hash(&mphf, keys[i].key_ptr, keys[i].key_len);
             printf("U+%06X hash=%d\n", i < 0xD800 ? i : i + 0x800, h);
         }
 
@@ -82,10 +82,10 @@ int main() {
         printf("\n达到最大重试次数，无法生成无环图\n");
     }
 
-    for (int32_t i = 0; i < key_count; i++) {
-        free((void*)items[i].data);
+    for (int32_t i = 0; i < num_keys; i++) {
+        free((void*)keys[i].key_ptr);
     }
-    free(items);
+    free(keys);
 
     return 0;
 }
